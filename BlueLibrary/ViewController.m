@@ -21,6 +21,7 @@
 @property (strong, nonatomic) NSDictionary *currentAlbumData;
 @property int currentAlbumIndex;
 @property UIToolbar *toolbar;
+@property NSMutableArray *undoStack;
 
 @end
 
@@ -28,6 +29,15 @@
 
 
 - (void)viewDidLoad {
+    self.toolbar = [[UIToolbar alloc] init];
+    UIBarButtonItem *undoItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemUndo target:self action:@selector(undoAction)];
+    undoItem.enabled = NO;
+    UIBarButtonItem *space = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    UIBarButtonItem *delete = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemTrash target:self action:@selector(deleteAlbum)];
+    [self.toolbar setItems:@[undoItem,space,delete]];
+    [self.view addSubview:self.toolbar];
+    self.undoStack = [[NSMutableArray alloc] init];
+
     //make sure to intiailize superclass method and set background color
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:.76f green:.81f blue:.87f alpha:1];
@@ -56,6 +66,68 @@
     
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveCurrentState) name:UIApplicationDidEnterBackgroundNotification object:nil];
 }
+
+- (void)viewWillLayoutSubviews
+{
+    self.toolbar.frame = CGRectMake(0, self.view.frame.size.height-44, self.view.frame.size.width, 44);
+    self.dataTable.frame = CGRectMake(0, 130, self.view.frame.size.width, self.view.frame.size.height - 200);
+}
+
+- (void)addAlbum:(Album*)album atIndex:(int)index
+{
+    [[LibraryAPI sharedInstance] addAlbum:album atIndex:index];
+   self.currentAlbumIndex = index;
+    [self reloadScroller];
+}
+
+- (void)deleteAlbum
+{
+    Album *deletedAlbum = self.allAlbums[self.currentAlbumIndex];
+
+    //if we delete an album, we need to hang on to that object temporarily in case we choose to undo the action. We create a method signature and set it to our add album method.
+    NSMethodSignature *sig = [self methodSignatureForSelector:@selector(addAlbum:atIndex:)];
+    NSInvocation *undoAction = [NSInvocation invocationWithMethodSignature:sig];
+    //target argument
+    [undoAction setTarget:self];
+    //selector argument
+    [undoAction setSelector:@selector(addAlbum:atIndex:)];
+    
+    //these indices are used to refer to the argument position of the method being passed (starting with 2, we have the album argument and then the index argument). We use the memory address as arguments.
+    //memory address of deleted album contains Album object
+    [undoAction setArgument:&deletedAlbum atIndex:2];
+    //memory address of deleted album contains integer denoting index in album array model.
+    [undoAction setArgument:&_currentAlbumIndex atIndex:3];
+    [undoAction retainArguments];
+    
+    [self.undoStack addObject:undoAction];
+    
+    [[LibraryAPI sharedInstance] deleteAlbumAtIndex:self.currentAlbumIndex];
+    [self reloadScroller];
+    
+    //enable undo button since there is now an object in the undo stack
+    [self.toolbar.items[0] setEnabled:YES];
+}
+
+
+- (void)undoAction
+{
+    if (self.undoStack.count > 0)
+    {
+        NSInvocation *undoAction = [self.undoStack lastObject];
+        [self.undoStack removeLastObject];
+        [undoAction invoke];
+    }
+    
+    //if there is nothing to do, disable the undo button
+    if (self.undoStack.count == 0)
+    {
+        [self.toolbar.items[0] setEnabled:NO];
+    }
+}
+
+
+
+
 
 - (void)showDataForAlbumAtIndex:(int)albumIndex
 {
@@ -120,7 +192,9 @@
 {
     self.allAlbums = [[LibraryAPI sharedInstance] getAlbums];
     if (self.currentAlbumIndex < 0) self.currentAlbumIndex = 0;
-    else if (self.currentAlbumIndex >= self.allAlbums.count) self.currentAlbumIndex = *((int *)self.allAlbums.count-1);
+    else if (self.currentAlbumIndex >= self.allAlbums.count) {
+     self.currentAlbumIndex = self.allAlbums.count-1;   
+    }
     [scroller reload];
     [self showDataForAlbumAtIndex:self.currentAlbumIndex];
 }
